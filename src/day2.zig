@@ -2,9 +2,6 @@ const std = @import("std");
 const aoc25_zig = @import("aoc25_zig");
 
 const inputContent = @embedFile("data/day2_1.text");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
-var gpa = std.heap.page_allocator;
 
 fn numberOfDigits(n: usize) u32 {
     var count: u32 = 0;

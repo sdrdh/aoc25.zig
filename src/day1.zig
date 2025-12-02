@@ -41,7 +41,6 @@ pub fn part2() !u32 {
             'R' => {
                 next = current + count;
                 total += next / 100;
-                std.debug.print("R, current: {d} count: {d} next {d} toAdd: {d}\n", .{ current, count, next % 100, next / 100 });
                 current = next % 100;
             },
             'L' => {
@@ -56,7 +55,6 @@ pub fn part2() !u32 {
                 if (next == 0) {
                     toAdd += 1;
                 }
-                std.debug.print("L, current: {d} count: {d} next: {d} toAdd: {d}\n", .{ current, count, next, toAdd });
                 total += toAdd;
                 current = 0 + next;
             },
