@@ -1,391 +1,156 @@
-const builtin = @import("builtin");
-comptime {
-    const required_zig = "0.14.0-dev";
-    const current_zig = builtin.zig_version;
-    const min_zig = std.SemanticVersion.parse(required_zig) catch unreachable;
-    if (current_zig.order(min_zig) == .lt) {
-        const error_message =
-            \\Sorry, it looks like your version of zig is too old. :-(
-            \\
-            \\aoc.zig requires development build {}
-            \\
-            \\Please download a development ("master") build from
-            \\
-            \\https://ziglang.org/download/
-            \\
-            \\
-        ;
-        @compileError(std.fmt.comptimePrint(error_message, .{min_zig}));
-    }
-}
-
 const std = @import("std");
-const fs = std.fs;
-const mem = std.mem;
-const http = std.http;
-const fmt = std.fmt;
 
-const Build = std.Build;
-const Module = Build.Module;
-const LazyPath = Build.LazyPath;
-const Step = Build.Step;
-const Allocator = std.mem.Allocator;
-const print = std.debug.print;
-
-var YEAR: []const u8 = undefined;
-var DAY: []const u8 = undefined;
-const INPUT_DIR = "input";
-const SRC_DIR = "src";
-
-pub fn build(b: *Build) !void {
-    // Year and day comptime selection
-    const date = timestampToYearAndDay(
-        std.time.timestamp(),
-        -5, // AoC is in EST
-    );
-    YEAR = b.option(
-        []const u8,
-        "year",
-        "The year of the Advent of Code challenge",
-    ) orelse try fmt.allocPrint(b.allocator, "{d}", .{date.year});
-    DAY = b.option(
-        []const u8,
-        "day",
-        "The day of the Advent of Code challenge",
-    ) orelse try fmt.allocPrint(b.allocator, "{d}", .{date.day});
-
-    // Targets
+// Although this function looks imperative, it does not perform the build
+// directly and instead it mutates the build graph (`b`) that will be then
+// executed by an external runner. The functions in `std.Build` implement a DSL
+// for defining build steps and express dependencies between them, allowing the
+// build runner to parallelize the build automatically (and the cache system to
+// know when a step doesn't need to be re-run).
+pub fn build(b: *std.Build) void {
+    // Standard target options allow the person running `zig build` to choose
+    // what target to build for. Here we do not override the defaults, which
+    // means any target is allowed, and the default is native. Other options
+    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
+    // Standard optimization options allow the person running `zig build` to select
+    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
+    // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
+    // It's also possible to define more custom flags to toggle optional features
+    // of this build script using `b.option()`. All defined flags (including
+    // target and optimize options) will be listed when running `zig build --help`
+    // in this directory.
 
-    const problem_imports: []const Module.Import = &.{
-        // regex: {
-        //     const regex = b.dependency("regex", .{ .target = target, .optimize = optimize });
-        //     break :regex .{ .name = "regex", .module = regex.module("regex") };
-        // },
-        .{ .name = "util", .module = b.addModule(
-            "util",
-            .{
-                .root_source_file = b.path("src/util.zig"),
-                .target = target,
-                .optimize = optimize,
-            },
-        ) },
-    };
-    const exe = b.addExecutable(.{
-        .name = "aoc.zig",
-        .root_source_file = b.path("src/main.zig"),
+    // This creates a module, which represents a collection of source files alongside
+    // some compilation options, such as optimization mode and linked system libraries.
+    // Zig modules are the preferred way of making Zig code available to consumers.
+    // addModule defines a module that we intend to make available for importing
+    // to our consumers. We must give it a name because a Zig package can expose
+    // multiple modules and consumers will need to be able to specify which
+    // module they want to access.
+    const mod = b.addModule("aoc25_zig", .{
+        // The root source file is the "entry point" of this module. Users of
+        // this module will only be able to access public declarations contained
+        // in this file, which means that if you have declarations that you
+        // intend to expose to consumers that were defined in other files part
+        // of this module, you will have to make sure to re-export them from
+        // the root file.
+        .root_source_file = b.path("src/root.zig"),
+        // Later on we'll use this module as the root module of a test executable
+        // which requires us to specify a target.
         .target = target,
-        .optimize = optimize,
     });
-    const problem = b.addModule(
-        "problem",
-        .{
-            .imports = problem_imports,
-            .root_source_file = b.path(
-                try fs.path.join(
-                    b.allocator,
-                    &[_][]const u8{
-                        SRC_DIR,
-                        YEAR,
-                        try fmt.allocPrint(
-                            b.allocator,
-                            "day{s}.zig",
-                            .{DAY},
-                        ),
-                    },
-                ),
-            ),
+
+    // Here we define an executable. An executable needs to have a root module
+    // which needs to expose a `main` function. While we could add a main function
+    // to the module defined above, it's sometimes preferable to split business
+    // logic and the CLI into two separate modules.
+    //
+    // If your goal is to create a Zig library for others to use, consider if
+    // it might benefit from also exposing a CLI tool. A parser library for a
+    // data serialization format could also bundle a CLI syntax checker, for example.
+    //
+    // If instead your goal is to create an executable, consider if users might
+    // be interested in also being able to embed the core functionality of your
+    // program in their own executable in order to avoid the overhead involved in
+    // subprocessing your CLI tool.
+    //
+    // If neither case applies to you, feel free to delete the declaration you
+    // don't need and to put everything under a single module.
+    const exe = b.addExecutable(.{
+        .name = "aoc25_zig",
+        .root_module = b.createModule(.{
+            // b.createModule defines a new module just like b.addModule but,
+            // unlike b.addModule, it does not expose the module to consumers of
+            // this package, which is why in this case we don't have to give it a name.
+            .root_source_file = b.path("src/main.zig"),
+            // Target and optimization levels must be explicitly wired in when
+            // defining an executable or library (in the root module), and you
+            // can also hardcode a specific target for an executable or library
+            // definition if desireable (e.g. firmware for embedded devices).
             .target = target,
             .optimize = optimize,
-        },
-    );
-    const input = b.addModule(
-        "input",
-        .{
-            .root_source_file = b.path(
-                try fs.path.join(
-                    b.allocator,
-                    &[_][]const u8{
-                        INPUT_DIR,
-                        YEAR,
-                        try fmt.allocPrint(
-                            b.allocator,
-                            "day{s}.txt",
-                            .{DAY},
-                        ),
-                    },
-                ),
-            ),
-            .target = target,
-            .optimize = optimize,
-        },
-    );
+            // List of modules available for import in source files part of the
+            // root module.
+            .imports = &.{
+                // Here "aoc25_zig" is the name you will use in your source code to
+                // import this module (e.g. `@import("aoc25_zig")`). The name is
+                // repeated because you are allowed to rename your imports, which
+                // can be extremely useful in case of collisions (which can happen
+                // importing modules from different packages).
+                .{ .name = "aoc25_zig", .module = mod },
+            },
+        }),
+    });
 
-    exe.root_module.addImport("problem", problem);
-    exe.root_module.addImport("input", input);
-
-    // Setup Step:
-    // - File -> ./input/{year}/{day}.txt. If not exist on disk, fetch from AoC API, save to disk, and then read.
-    // - File -> ./src/{year}/{day}.zig. If not exist on disk, Create new file with template `assets/template.zig`.
-    const setup_step = b.step(
-        "setup",
-        "Fetch inputs and create source files for the requested year and day",
-    );
-    setup_step.makeFn = setup;
-    exe.step.dependOn(setup_step);
-
-    // install
+    // This declares intent for the executable to be installed into the
+    // install prefix when running `zig build` (i.e. when executing the default
+    // step). By default the install prefix is `zig-out/` but can be overridden
+    // by passing `--prefix` or `-p`.
     b.installArtifact(exe);
 
-    // run
+    // This creates a top level step. Top level steps have a name and can be
+    // invoked by name when running `zig build` (e.g. `zig build run`).
+    // This will evaluate the `run` step rather than the default step.
+    // For a top level step to actually do something, it must depend on other
+    // steps (e.g. a Run step, as we will see in a moment).
+    const run_step = b.step("run", "Run the app");
+
+    // This creates a RunArtifact step in the build graph. A RunArtifact step
+    // invokes an executable compiled by Zig. Steps will only be executed by the
+    // runner if invoked directly by the user (in the case of top level steps)
+    // or if another step depends on it, so it's up to you to define when and
+    // how this Run step will be executed. In our case we want to run it when
+    // the user runs `zig build run`, so we create a dependency link.
     const run_cmd = b.addRunArtifact(exe);
+    run_step.dependOn(&run_cmd.step);
+
+    // By making the run step depend on the default step, it will be run from the
+    // installation directory rather than directly from within the cache directory.
     run_cmd.step.dependOn(b.getInstallStep());
+
+    // This allows the user to pass arguments to the application in the build
+    // command itself, like this: `zig build run -- arg1 arg2 etc`
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
 
-    // test
-    const problem_unit_tests = b.addTest(.{
-        .root_source_file = b.path(
-            try fs.path.join(
-                b.allocator,
-                &[_][]const u8{
-                    SRC_DIR,
-                    YEAR,
-                    try fmt.allocPrint(
-                        b.allocator,
-                        "day{s}.zig",
-                        .{DAY},
-                    ),
-                },
-            ),
-        ),
-        .target = target,
-        .optimize = optimize,
-    });
-    const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+    // Creates an executable that will run `test` blocks from the provided module.
+    // Here `mod` needs to define a target, which is why earlier we made sure to
+    // set the releative field.
+    const mod_tests = b.addTest(.{
+        .root_module = mod,
     });
 
-    const run_lib_unit_tests = b.addRunArtifact(problem_unit_tests);
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
-    const test_step = b.step("test", "Run unit tests");
+    // A run step that will run the test executable.
+    const run_mod_tests = b.addRunArtifact(mod_tests);
 
-    problem_unit_tests.step.dependOn(setup_step);
-    exe_unit_tests.step.dependOn(setup_step);
+    // Creates an executable that will run `test` blocks from the executable's
+    // root module. Note that test executables only test one module at a time,
+    // hence why we have to create two separate ones.
+    const exe_tests = b.addTest(.{
+        .root_module = exe.root_module,
+    });
 
-    test_step.dependOn(&run_lib_unit_tests.step);
-    test_step.dependOn(&run_exe_unit_tests.step);
+    // A run step that will run the second test executable.
+    const run_exe_tests = b.addRunArtifact(exe_tests);
 
-    // clean
-    const clean_step = b.step("clean", "Remove build artifacts");
-    clean_step.dependOn(&b.addRemoveDirTree(b.path(fs.path.basename(b.install_path))).step);
+    // A top level step for running all tests. dependOn can be called multiple
+    // times and since the two run steps do not depend on one another, this will
+    // make the two of them run in parallel.
+    const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_mod_tests.step);
+    test_step.dependOn(&run_exe_tests.step);
 
-    // in windows, you cannot delete a running executable 😥
-    if (builtin.os.tag != .windows)
-        clean_step.dependOn(&b.addRemoveDirTree(b.path(".zig-cache")).step);
-}
-
-fn setup(s: *Build.Step, o: Build.Step.MakeOptions) !void {
-    // NOTE: Might use those guys later for caching purposes.
-    _ = o;
-    _ = s;
-
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    fetchInputFileIfNotPresent(allocator) catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => {
-            print("AOC_SESSION_TOKEN environment variable not found, you need to set it to fetch input files from AoC Server.\n", .{});
-            std.process.exit(1);
-        },
-        error.FailedToFetchInputFile => {
-            print("Failed to fetch input file from AoC Server (Has the problem already been released?).\n", .{});
-            std.process.exit(1);
-        },
-        else => {
-            print("Error: {}\n", .{err});
-            std.process.exit(1);
-        },
-    };
-
-    try generateSourceFileIfNotPresent(allocator);
-}
-
-fn fetchInputFileIfNotPresent(allocator: Allocator) !void {
-    const input_path = try fs.path.join(
-        allocator,
-        &[_][]const u8{
-            INPUT_DIR,
-            YEAR,
-            try fmt.allocPrint(
-                allocator,
-                "day{s}.txt",
-                .{DAY},
-            ),
-        },
-    );
-
-    // If file is already present, return the path
-    if (fs.cwd().access(input_path, .{})) |_| {
-        return;
-    } else |_| { // Else, fetch from AoC API, save to disk, and then return the path
-        const session_token = try std.process.getEnvVarOwned(
-            allocator,
-            "AOC_SESSION_TOKEN",
-        );
-
-        var http_client = http.Client{
-            .allocator = allocator,
-        };
-        defer http_client.deinit();
-
-        var response = std.ArrayList(u8).init(allocator);
-        defer response.deinit();
-
-        const res = try http_client.fetch(.{
-            .location = .{
-                .url = try fmt.allocPrint(
-                    allocator,
-                    "https://adventofcode.com/{s}/day/{s}/input",
-                    .{ YEAR, DAY },
-                ),
-            },
-            .method = .GET,
-            .extra_headers = &[_]http.Header{
-                .{
-                    .name = "Cookie",
-                    .value = try fmt.allocPrint(
-                        allocator,
-                        "session={s}",
-                        .{session_token},
-                    ),
-                },
-            },
-            .response_storage = .{ .dynamic = &response },
-        });
-
-        if (res.status != .ok)
-            return error.FailedToFetchInputFile;
-
-        // Save to disk
-        const dir = try fs.cwd().makeOpenPath(
-            fs.path.dirname(input_path).?,
-            .{},
-        );
-        const file = try dir.createFile(fs.path.basename(input_path), .{});
-        defer file.close();
-        try file.writeAll(response.items);
-    }
-}
-
-fn generateSourceFileIfNotPresent(allocator: Allocator) !void {
-    const src_path = try fs.path.join(
-        allocator,
-        &[_][]const u8{
-            SRC_DIR,
-            YEAR,
-            try fmt.allocPrint(
-                allocator,
-                "day{s}.zig",
-                .{DAY},
-            ),
-        },
-    );
-
-    // If file is already present, do nothing
-    if (fs.cwd().access(src_path, .{})) |_| {
-        return;
-    } else |_| { // Else, create new file with template
-        const template =
-            \\const std = @import("std");
-            \\const mem = std.mem;
-            \\
-            \\input: []const u8,
-            \\allocator: mem.Allocator,
-            \\
-            \\pub fn part1(this: *const @This()) !?i64 {
-            \\    _ = this;
-            \\    return null;
-            \\}
-            \\
-            \\pub fn part2(this: *const @This()) !?i64 {
-            \\    _ = this;
-            \\    return null;
-            \\}
-            \\
-            \\test "it should do nothing" {
-            \\    const allocator = std.testing.allocator;
-            \\    const input = "";
-            \\
-            \\    const problem: @This() = .{
-            \\        .input = input,
-            \\        .allocator = allocator,
-            \\    };
-            \\
-            \\    try std.testing.expectEqual(null, try problem.part1());
-            \\    try std.testing.expectEqual(null, try problem.part2());
-            \\}
-        ;
-        const dir = try fs.cwd().makeOpenPath(
-            fs.path.dirname(src_path).?,
-            .{},
-        );
-        const file = try dir.createFile(fs.path.basename(src_path), .{});
-        defer file.close();
-        try file.writeAll(template);
-    }
-}
-
-// Zig std lib doesn't have DateTime yet, so I had to roll my own abomination.
-inline fn isLeapYear(year: i64) bool {
-    return (@mod(year, 4) == 0 and @mod(year, 100) != 0) or (@mod(year, 400) == 0);
-}
-
-fn timestampToYearAndDay(timestamp: i64, timezoneOffsetHours: i64) struct { year: i64, day: i64 } {
-    var year: i64 = 1970;
-    const secondsInNormalYear: i64 = 31536000; // 365 days
-    const secondsInLeapYear: i64 = 31622400; // 366 days
-
-    // Adjust timestamp for timezone offset
-    const adjustedTimestamp: i64 = timestamp + timezoneOffsetHours * 3600;
-
-    // Calculate the year
-    var remainingSeconds = adjustedTimestamp;
-    while (true) {
-        const secondsInYear = if (isLeapYear(year)) secondsInLeapYear else secondsInNormalYear;
-        if (remainingSeconds < secondsInYear) break;
-        remainingSeconds -= secondsInYear;
-        year += 1;
-    }
-
-    // Calculate the day of the year
-    const secondsPerDay: i64 = 24 * 60 * 60;
-    var dayOfYear = @as(i64, @divTrunc(remainingSeconds, secondsPerDay)) + 1;
-    remainingSeconds = @mod(remainingSeconds, secondsPerDay);
-
-    // Calculate the month and day of the month
-    const daysInMonth: [2][12]u8 = .{
-        // Normal year
-        .{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 },
-        // Leap year
-        .{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 },
-    };
-
-    const leapIndex: usize = if (isLeapYear(year)) 1 else 0;
-    var monthIndex: usize = 0;
-
-    while (dayOfYear > @as(i64, daysInMonth[leapIndex][monthIndex])) {
-        dayOfYear -= @as(i64, daysInMonth[leapIndex][monthIndex]);
-        monthIndex += 1;
-    }
-
-    // Return the year and day of the month
-    return .{ .year = year, .day = dayOfYear };
+    // Just like flags, top level steps are also listed in the `--help` menu.
+    //
+    // The Zig build system is entirely implemented in userland, which means
+    // that it cannot hook into private compiler APIs. All compilation work
+    // orchestrated by the build system will result in other Zig compiler
+    // subcommands being invoked with the right flags defined. You can observe
+    // these invocations when one fails (or you pass a flag to increase
+    // verbosity) to validate assumptions and diagnose problems.
+    //
+    // Lastly, the Zig build system is relatively simple and self-contained,
+    // and reading its source code will allow you to master it.
 }

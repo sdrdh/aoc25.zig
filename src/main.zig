@@ -1,31 +1,27 @@
 const std = @import("std");
-const fs = std.fs;
-const io = std.io;
-const heap = std.heap;
-
-const Problem = @import("problem");
+const aoc25_zig = @import("aoc25_zig");
 
 pub fn main() !void {
-    const stdout = io.getStdOut().writer();
+    // Prints to stderr, ignoring potential errors.
+    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    try aoc25_zig.bufferedPrint();
+}
 
-    var arena = heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+test "simple test" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayList(i32) = .empty;
+    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
+    try list.append(gpa, 42);
+    try std.testing.expectEqual(@as(i32, 42), list.pop());
+}
 
-    const problem = Problem{
-        .input = @embedFile("input"),
-        .allocator = allocator,
+test "fuzz example" {
+    const Context = struct {
+        fn testOne(context: @This(), input: []const u8) anyerror!void {
+            _ = context;
+            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
+            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
+        }
     };
-
-    if (try problem.part1()) |solution|
-        try stdout.print(switch (@TypeOf(solution)) {
-            []const u8 => "{s}",
-            else => "{any}",
-        } ++ "\n", .{solution});
-
-    if (try problem.part2()) |solution|
-        try stdout.print(switch (@TypeOf(solution)) {
-            []const u8 => "{s}",
-            else => "{any}",
-        } ++ "\n", .{solution});
+    try std.testing.fuzz(Context{}, Context.testOne, .{});
 }
