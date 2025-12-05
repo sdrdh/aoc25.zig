@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 const DoublyLinkedList = std.DoublyLinkedList;
 const Node = DoublyLinkedList.Node;
 
-const inputContent = @embedFile("data/day3.text");
+const inputContent = @embedFile("data/day3.txt");
 
 const testContent = "987654321111111\n811111111111119\n234234234234278\n818181911112111";
 

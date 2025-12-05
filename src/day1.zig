@@ -1,7 +1,7 @@
 const std = @import("std");
 const aoc25_zig = @import("aoc25_zig");
 
-const inputContent = @embedFile("data/day1_1.text");
+const inputContent = @embedFile("data/day1.txt");
 const allocator = std.mem.Allocator.default;
 
 pub fn part1() !u32 {
